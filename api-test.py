@@ -1,7 +1,7 @@
 import requests
 import os
 from dotenv import load_dotenv
-import pandas as pd 
+import pandas as pd
 
 load_dotenv()
 
@@ -22,5 +22,3 @@ response.raise_for_status()
 data = response.json()
 
 df = pd.DataFrame(data["response"]["data"])
-
-print(df.head())
