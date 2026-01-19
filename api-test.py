@@ -1,49 +1,37 @@
-import requests
 import os
-from dotenv import load_dotenv
+
 import pandas as pd
+import requests
+from dotenv import load_dotenv
 
 load_dotenv()
-
 
 EIA_API_KEY = os.getenv("EIA_API_KEY")
 if not EIA_API_KEY:
     raise RuntimeError("EIA_API_KEY not set")
 
-base_url = "https://api.eia.gov/v2/electricity/rto/region-data/data/"
+BASE_URL = "https://api.eia.gov/v2/electricity/rto/region-data/data/"
 
 params = {
     "api_key": EIA_API_KEY,
+    "frequency": "hourly",
     "data[0]": "value",
+    "facets[respondent][]": "LDWP",
     "facets[type][]": "D",
+    "start": "2022-01-01T00",
+    "end": "2022-01-02T00",
+    "offset": 0,
     "length": 5000,
-    "start": "2023-01-01",
-    "end": "2023-01-02",
 }
 
-all_rows = []
-offset = 0
-page_size = 5000
+response = requests.get(BASE_URL, params=params, timeout=60)
 
-while True:
-    params["offset"] = offset
+# Print the fully resolved URL for debugging
+print(response.url)
 
-    response = requests.get(
-        "https://api.eia.gov/v2/electricity/rto/region-data/data/",
-        params=params,
-        timeout=60,
-    )
-    response.raise_for_status()
+response.raise_for_status()
 
-    batch = response.json()["response"]["data"]
-    if not batch:
-        break
-
-    all_rows.extend(batch)
-
-    if len(batch) < page_size:
-        break
-
-    offset += page_size
-
-df = pd.DataFrame(all_rows)
+data = response.json()
+data_df = pd.DataFrame(data["response"]["data"])
+data_df.to_csv("data.csv", index=False)
+print(data)
