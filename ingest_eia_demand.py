@@ -6,83 +6,117 @@ import pandas as pd
 import requests
 from dotenv import load_dotenv
 
-# Environment
-load_dotenv()
 
-EIA_API_KEY = os.getenv("EIA_API_KEY")
-if not EIA_API_KEY:
-    raise RuntimeError("EIA_API_KEY not set")
+def get_all_data(params: dict, base_url: str) -> list:
+    """Get all data from the EIA API by paginating through the results."""
+    all_data = []
+    offset = 0
+    while True:
+        params["offset"] = offset
+        response = requests.get(base_url, params=params, timeout=60)
+        print(response.url)
+        response.raise_for_status()
+        data = response.json()
+        new_data = data.get("response", {}).get("data", [])
+        if not new_data:
+            break
+        all_data.extend(new_data)
+        offset += len(new_data)
+    return all_data
 
-BASE_URL = "https://api.eia.gov/v2/electricity/rto/region-data/data/"
 
-# Snapshot semantics
-SNAPSHOT_DATE = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-CUTOFF_TS = "2022-01-01T23:59:00Z"  # Compute dynamically in prod.
+def main():
+    """Main function to ingest EIA demand data."""
+    # Environment
+    load_dotenv()
 
-# Directory setup.
-BASE_DIR = "data"
-RAW_DIR = f"{BASE_DIR}/raw/eia_api/snapshot_date={SNAPSHOT_DATE}/cutoff={CUTOFF_TS}"
-PARSED_DIR = (
-    f"{BASE_DIR}/parsed/demand/snapshot_date={SNAPSHOT_DATE}/cutoff={CUTOFF_TS}"
-)
+    EIA_API_KEY = os.getenv("EIA_API_KEY")
+    if not EIA_API_KEY:
+        raise RuntimeError("EIA_API_KEY not set")
 
-os.makedirs(RAW_DIR, exist_ok=False)
-os.makedirs(PARSED_DIR, exist_ok=False)
+    BASE_URL = "https://api.eia.gov/v2/electricity/rto/region-data/data/"
 
-# API parameters
-params = {
-    "api_key": EIA_API_KEY,
-    "frequency": "hourly",
-    "data[0]": "value",
-    "facets[respondent][]": "LDWP",
-    "facets[type][]": "D",
-    "start": "2022-01-01T00",
-    "end": "2022-01-02T00",
-    "offset": 0,
-    "length": 5000,
-}
+    # Snapshot semantics
+    # In production, this would be computed dynamically. For example, you might
+    # run this job daily to get the previous day's data.
+    SNAPSHOT_DATE = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    CUTOFF_TS = "2022-12-31T23:59:00Z"
 
-# API pull
-response = requests.get(BASE_URL, params=params, timeout=60)
-print(response.url)
-response.raise_for_status()
-
-raw_json = response.json()
-
-# Persist RAW snapshot.
-raw_path = f"{RAW_DIR}/response.json"
-with open(raw_path, "w") as f:
-    json.dump(raw_json, f, indent=2)
-
-metadata = {
-    "snapshot_date": SNAPSHOT_DATE,
-    "cutoff_timestamp": CUTOFF_TS,
-    "api_endpoint": BASE_URL,
-    "api_params": params,
-    "row_count": len(raw_json.get("response", {}).get("data", [])),
-    "ingested_at_utc": datetime.now(timezone.utc).isoformat(),
-}
-
-with open(f"{RAW_DIR}/metadata.json", "w") as f:
-    json.dump(metadata, f, indent=2)
-
-# Parse into DataFrame.
-data_df = pd.DataFrame(raw_json["response"]["data"])
-
-# Canonical typing / normalization.
-data_df["period"] = pd.to_datetime(data_df["period"], utc=True)
-data_df["value"] = pd.to_numeric(data_df["value"], errors="coerce")
-
-# Persist parsed dataset.
-parquet_path = f"{PARSED_DIR}/demand.parquet"
-data_df.to_parquet(parquet_path, index=False)
-
-schema_path = f"{PARSED_DIR}/schema.json"
-with open(schema_path, "w") as f:
-    json.dump(
-        {col: str(dtype) for col, dtype in data_df.dtypes.items()},
-        f,
-        indent=2,
+    # Directory setup.
+    BASE_DIR = "data"
+    RAW_DIR = f"{BASE_DIR}/raw/eia_api/snapshot_date={SNAPSHOT_DATE}/cutoff={CUTOFF_TS}"
+    PARSED_DIR = (
+        f"{BASE_DIR}/parsed/demand/snapshot_date={SNAPSHOT_DATE}/cutoff={CUTOFF_TS}"
     )
 
-print("Snapshot completed successfully")
+    # In production, you might want to check if the data already exists and
+    # skip this job if it does.
+    os.makedirs(RAW_DIR, exist_ok=True)
+    os.makedirs(PARSED_DIR, exist_ok=True)
+
+    # API parameters
+    # In production, the start and end dates would be parameterized and likely
+    # passed in as arguments to the script.
+    params = {
+        "api_key": EIA_API_KEY,
+        "frequency": "hourly",
+        "data[0]": "value",
+        "facets[respondent][]": "LDWP",
+        "facets[type][]": "D",
+        "start": "2022-01-01T00",
+        "end": "2023-01-01T00",
+        "length": 5000,
+    }
+
+    # API pull
+    raw_data = get_all_data(params, BASE_URL)
+
+    # Persist RAW snapshot.
+    raw_path = f"{RAW_DIR}/response.json"
+    with open(raw_path, "w") as f:
+        # In production, you might write this to a cloud storage bucket like S3
+        # instead of a local file.
+        json.dump(raw_data, f, indent=2)
+
+    metadata = {
+        "snapshot_date": SNAPSHOT_DATE,
+        "cutoff_timestamp": CUTOFF_TS,
+        "api_endpoint": BASE_URL,
+        "api_params": {
+            k: v for k, v in params.items() if k != "api_key"
+        },  # Don't save secrets
+        "row_count": len(raw_data),
+        "ingested_at_utc": datetime.now(timezone.utc).isoformat(),
+    }
+
+    with open(f"{RAW_DIR}/metadata.json", "w") as f:
+        json.dump(metadata, f, indent=2)
+
+    # Parse into DataFrame.
+    data_df = pd.DataFrame(raw_data)
+
+    # Canonical typing / normalization.
+    # In production, you'd want to have robust error handling here.
+    # For example, what happens if the 'period' column has an unexpected format?
+    data_df["period"] = pd.to_datetime(data_df["period"], utc=True)
+    data_df["value"] = pd.to_numeric(data_df["value"], errors="coerce")
+
+    # Persist parsed dataset.
+    # In production, this would likely be written to a data warehouse like
+    # BigQuery, Snowflake, or a data lake like Delta Lake on S3.
+    parquet_path = f"{PARSED_DIR}/demand.parquet"
+    data_df.to_parquet(parquet_path, index=False)
+
+    schema_path = f"{PARSED_DIR}/schema.json"
+    with open(schema_path, "w") as f:
+        json.dump(
+            {col: str(dtype) for col, dtype in data_df.dtypes.items()},
+            f,
+            indent=2,
+        )
+
+    print("Snapshot completed successfully")
+
+
+if __name__ == "__main__":
+    main()
