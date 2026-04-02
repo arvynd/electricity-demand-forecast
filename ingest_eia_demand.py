@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import pandas as pd
 import requests
 from dotenv import load_dotenv
+from loguru import logger
 
 
 def get_all_data(params: dict, base_url: str) -> list:
@@ -14,8 +15,7 @@ def get_all_data(params: dict, base_url: str) -> list:
     while True:
         params["offset"] = offset
         response = requests.get(base_url, params=params, timeout=60)
-        print(response.url)
-        response.raise_for_status()
+        logger.info(response.raise_for_status())
         data = response.json()
         new_data = data.get("response", {}).get("data", [])
         if not new_data:
@@ -37,8 +37,6 @@ def main():
     BASE_URL = "https://api.eia.gov/v2/electricity/rto/region-data/data/"
 
     # Snapshot semantics
-    # In production, this would be computed dynamically. For example, you might
-    # run this job daily to get the previous day's data.
     SNAPSHOT_DATE = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     CUTOFF_TS = "2022-12-31T23:59:00Z"
 
@@ -55,8 +53,6 @@ def main():
     os.makedirs(PARSED_DIR, exist_ok=True)
 
     # API parameters
-    # In production, the start and end dates would be parameterized and likely
-    # passed in as arguments to the script.
     params = {
         "api_key": EIA_API_KEY,
         "frequency": "hourly",
@@ -102,10 +98,10 @@ def main():
     data_df["value"] = pd.to_numeric(data_df["value"], errors="coerce")
 
     # Persist parsed dataset.
-    # In production, this would likely be written to a data warehouse like
-    # BigQuery, Snowflake, or a data lake like Delta Lake on S3.
     parquet_path = f"{PARSED_DIR}/demand.parquet"
+    csv_path = f"{PARSED_DIR}/demand.csv"
     data_df.to_parquet(parquet_path, index=False)
+    data_df.to_csv(csv_path, index=False)
 
     schema_path = f"{PARSED_DIR}/schema.json"
     with open(schema_path, "w") as f:
