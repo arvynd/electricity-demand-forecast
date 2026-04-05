@@ -12,16 +12,23 @@ def get_all_data(params: dict, base_url: str) -> list:
     """Get all data from the EIA API by paginating through the results."""
     all_data = []
     offset = 0
+    page = 0
     while True:
+        page += 1
         params["offset"] = offset
+        logger.info(f"Fetching page {page} (offset={offset})...")
         response = requests.get(base_url, params=params, timeout=60)
-        logger.info(response.raise_for_status())
+        logger.info(f"Response status: {response.status_code}")
+        response.raise_for_status()
         data = response.json()
         new_data = data.get("response", {}).get("data", [])
+        logger.info(f"Page {page} returned {len(new_data)} rows.")
         if not new_data:
+            logger.info("No more data. Pagination complete.")
             break
         all_data.extend(new_data)
         offset += len(new_data)
+    logger.info(f"Total rows fetched: {len(all_data)}")
     return all_data
 
 
@@ -34,32 +41,25 @@ def main():
     if not EIA_API_KEY:
         raise RuntimeError("EIA_API_KEY not set")
 
-    BASE_URL = "https://api.eia.gov/v2/electricity/rto/region-data/data/"
+    BASE_URL = "https://api.eia.gov/v2/natural-gas/stor/wkly/data/"
 
     # Snapshot semantics
     SNAPSHOT_DATE = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    CUTOFF_TS = "2022-12-31T23:59:00Z"
 
     # Directory setup.
     BASE_DIR = "data"
-    RAW_DIR = f"{BASE_DIR}/raw/eia_api/snapshot_date={SNAPSHOT_DATE}/cutoff={CUTOFF_TS}"
-    PARSED_DIR = (
-        f"{BASE_DIR}/parsed/demand/snapshot_date={SNAPSHOT_DATE}/cutoff={CUTOFF_TS}"
-    )
+    RAW_DIR = f"{BASE_DIR}/raw/snapshot_date={SNAPSHOT_DATE}"
+    PARSED_DIR = f"{BASE_DIR}/parsed/demand/snapshot_date={SNAPSHOT_DATE}"
 
-    # In production, you might want to check if the data already exists and
-    # skip this job if it does.
     os.makedirs(RAW_DIR, exist_ok=True)
     os.makedirs(PARSED_DIR, exist_ok=True)
 
     # API parameters
     params = {
         "api_key": EIA_API_KEY,
-        "frequency": "hourly",
+        "frequency": "weekly",
         "data[0]": "value",
-        "facets[respondent][]": "LDWP",
-        "facets[type][]": "D",
-        "start": "2022-01-01T00",
+        "start": "2021-01-01T00",
         "end": "2023-01-01T00",
         "length": 5000,
     }
@@ -70,17 +70,11 @@ def main():
     # Persist RAW snapshot.
     raw_path = f"{RAW_DIR}/response.json"
     with open(raw_path, "w") as f:
-        # In production, you might write this to a cloud storage bucket like S3
-        # instead of a local file.
         json.dump(raw_data, f, indent=2)
 
     metadata = {
         "snapshot_date": SNAPSHOT_DATE,
-        "cutoff_timestamp": CUTOFF_TS,
         "api_endpoint": BASE_URL,
-        "api_params": {
-            k: v for k, v in params.items() if k != "api_key"
-        },  # Don't save secrets
         "row_count": len(raw_data),
         "ingested_at_utc": datetime.now(timezone.utc).isoformat(),
     }
@@ -92,8 +86,6 @@ def main():
     data_df = pd.DataFrame(raw_data)
 
     # Canonical typing / normalization.
-    # In production, you'd want to have robust error handling here.
-    # For example, what happens if the 'period' column has an unexpected format?
     data_df["period"] = pd.to_datetime(data_df["period"], utc=True)
     data_df["value"] = pd.to_numeric(data_df["value"], errors="coerce")
 
@@ -111,7 +103,7 @@ def main():
             indent=2,
         )
 
-    print("Snapshot completed successfully")
+    logger.info("Snapshot completed successfully")
 
 
 if __name__ == "__main__":
