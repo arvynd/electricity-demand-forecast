@@ -62,6 +62,7 @@ def main():
         "start": "2021-01-01T00",
         "end": "2023-01-01T00",
         "length": 5000,
+        "facets[process][]": "SWO",
     }
 
     # API pull
