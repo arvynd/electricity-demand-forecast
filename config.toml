@@ -1,0 +1,24 @@
+[data]
+base_dir = "data"
+parsed_demand_dir = "data/parsed/demand"
+
+[ingest]
+base_url = "https://api.eia.gov/v2/natural-gas/stor/wkly/data/"
+request_timeout = 60
+
+[ingest.params]
+frequency = "weekly"
+start = "2021-01-01T00"
+end = "2023-01-01T00"
+length = 5000
+facets_process = "SWO"
+
+[seasonal_naive]
+freq = "W"
+seasonal_period = 52
+h = 12
+
+[chronos]
+model = "amazon/chronos-2"
+prediction_length = 12
+quantile_levels = [0.1, 0.5, 0.9]
