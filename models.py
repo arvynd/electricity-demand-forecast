@@ -1,4 +1,7 @@
+from typing import Optional
+
 import pandas as pd
+import torch
 from chronos import BaseChronosPipeline, Chronos2Pipeline
 from statsforecast import StatsForecast
 from statsforecast.models import SeasonalNaive
@@ -18,15 +21,15 @@ def seasonal_naive_forecast(
 
 def chronos_forecast(
     df: pd.DataFrame,
-    # TODO: widen type hint to BaseChronosPipeline — Chronos2Pipeline is too narrow
-    pipeline: Chronos2Pipeline,
+    pipeline: BaseChronosPipeline,
     target: str,
     id_column: str,
     timestamp_column: str,
     prediction_length: int,
-    # TODO: mutable default argument anti-pattern — replace with None and assign inside body
-    quantile_levels: list[float] = [0.1, 0.5, 0.9],
+    quantile_levels: Optional[list[float]] = None
 ):
+    if quantile_levels is None:
+        quantile_levels = [0.1, 0.5, 0.9]
     return pipeline.predict_df(
         df,
         prediction_length=prediction_length,
@@ -37,8 +40,9 @@ def chronos_forecast(
     )
 
 
-def select_chronos_params(model: str, device_map: str = "cuda"):
-    # TODO: default device_map="cuda" crashes on CPU-only machines — detect via torch.cuda.is_available()
+def select_chronos_params(model: str, device_map: str = "cpu"):
+    if device_map == "cuda" and not torch.cuda.is_available():
+        device_map = "cpu"
     pipeline: Chronos2Pipeline = BaseChronosPipeline.from_pretrained(
         model, device_map=device_map
     )
